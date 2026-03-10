@@ -1,0 +1,56 @@
+import numpy as np
+import pandas as pd
+from sklearn.svm import SVR
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import LeaveOneOut, cross_val_predict
+
+# 1) Manual hyperparameter input (from best params)
+params = {
+    'C': 100,
+    'degree': 3,
+    'gamma': 'scale',
+    'epsilon': 1,
+    'coef0': 1,
+    'tol': 0.01
+}
+
+# 2) Prepare data (only x1–x7 and y1)
+data = {
+    'x1': #your_data_pathway,  # TFR
+    'x2': #your_data_pathway,  # FRR
+    'x3': #your_data_pathway,  # Conc
+    'x4': #your_data_pathway,  # DOPC
+    'x5': #your_data_pathway,  # Chol
+    'x6': #your_data_pathway,  # ESM
+    'x7': #your_data_pathway, # GP340
+    'x8': #your_data_pathway,  # rDPH
+    'y1': #your_data_pathway,  # Size
+    'y2': #your_data_pathway,  # PDI
+}
+df = pd.DataFrame(data)
+
+X = df[['x1','x2','x3','x4','x5','x6','x7','x8']].values
+y = df['y1'].values  # 1D array for single target
+
+# 3) Build pipeline
+pipeline = make_pipeline(
+    StandardScaler(),
+    SVR(kernel='poly', **params)
+)
+
+# 4) LOOCV prediction (no R²)
+loo = LeaveOneOut()
+y_pred = cross_val_predict(pipeline, X, y, cv=loo, n_jobs=-1)
+
+# 5) Compare and save
+df_compare = pd.DataFrame({
+    'y1_true': y,
+    'y1_pred': y_pred
+})
+csv_path = #'#your_pathway.csv'
+df_compare.to_csv(csv_path, index=False)
+print(f"▶ Actual vs Predicted (LOOCV) values saved to {csv_path}")
+
+# 6) Display sample
+print(df_compare.head())
