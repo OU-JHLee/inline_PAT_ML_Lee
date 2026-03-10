@@ -1,0 +1,112 @@
+import numpy as np
+import pandas as pd
+from xgboost import XGBRegressor
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import LeaveOneOut
+from sklearn.metrics import mean_squared_error, r2_score
+
+# ─── 1. data ─────────────────────────────────────────
+data = {
+    'x1': #your_data_pathway,  # TFR
+    'x2': #your_data_pathway,  # FRR
+    'x3': #your_data_pathway,  # Conc
+    'x4': #your_data_pathway,  # DOPC
+    'x5': #your_data_pathway,  # Chol
+    'x6': #your_data_pathway,  # ESM
+    'x7': #your_data_pathway, # GP340
+    'x8': #your_data_pathway,  # rDPH
+    'y1': #your_data_pathway,  # Size
+    'y2': #your_data_pathway,  # PDI
+}
+
+df = pd.DataFrame(data)
+
+X_full = df[['x1', 'x2', 'x3', 'x4', 'x5', 'x6', 'x7', 'x8']].values
+y_full = df['y1'].values
+
+# ─── 2. hyperparameters (from best params) ────────────────────────────────
+manual_params_y1 = {
+   'n_estimators': 10,
+   'max_depth': 1,
+   'learning_rate': 0.5,
+   'min_child_weight': 5,
+   'reg_alpha': 0.5,
+   'reg_lambda': 0.1,
+   'objective': 'reg:squarederror',
+   'random_state': 42
+}
+
+def loocv_rmse_leakfree(name, X, y, params,
+                       scale_X=True, scale_y=True,
+                       save_csv=True):
+   loo = LeaveOneOut()
+
+   preds_actual = []
+   actual_actual = []
+
+   for train_index, test_index in loo.split(X):
+       X_train_raw, X_test_raw = X[train_index], X[test_index]
+       y_train_raw, y_test_raw = y[train_index], y[test_index]
+
+       # ── X scaling: train fold에서만 fit ──
+       if scale_X:
+           scaler_x = StandardScaler()
+           X_train = scaler_x.fit_transform(X_train_raw)
+           X_test = scaler_x.transform(X_test_raw)
+       else:
+           X_train = X_train_raw
+           X_test = X_test_raw
+
+       # ── y scaling: train fold에서만 fit ──
+       if scale_y:
+           scaler_y = StandardScaler()
+           y_train = scaler_y.fit_transform(y_train_raw.reshape(-1, 1)).flatten()
+
+           model = XGBRegressor(**params)
+           model.fit(X_train, y_train)
+
+           pred_scaled = model.predict(X_test)[0]
+           pred_actual = scaler_y.inverse_transform([[pred_scaled]])[0, 0]
+       else:
+           model = XGBRegressor(**params)
+           model.fit(X_train, y_train_raw)
+
+           pred_actual = model.predict(X_test)[0]
+
+       preds_actual.append(pred_actual)
+       actual_actual.append(y_test_raw[0])
+
+   rmse_actual = np.sqrt(mean_squared_error(actual_actual, preds_actual))
+   r2_actual = r2_score(actual_actual, preds_actual)
+
+   print(f"[{name}] LOOCV RMSE (actual scale): {rmse_actual:.6f}")
+   print(f"[{name}] LOOCV R² (actual scale): {r2_actual:.6f}")
+
+   df_cmp = pd.DataFrame({
+       f'actual_{name}': actual_actual,
+       f'predicted_{name}': preds_actual
+   })
+   df_cmp['residual'] = df_cmp[f'actual_{name}'] - df_cmp[f'predicted_{name}']
+   df_cmp['abs_error'] = df_cmp['residual'].abs()
+   df_cmp['squared_error'] = df_cmp['residual'] ** 2
+
+   if save_csv:
+       filename = f"/Users/leejunghu/Desktop/compare_{name}_LOOCV_leakfree.csv"
+       with open(filename, 'w') as f:
+           f.write(f"# LOOCV RMSE (actual scale): {rmse_actual:.6f}\n")
+           f.write(f"# LOOCV R2 (actual scale): {r2_actual:.6f}\n")
+       df_cmp.to_csv(filename, mode='a', index=False)
+       print(f"[{name}] actual vs predicted (LOOCV, leak-free) → {filename}")
+
+   return rmse_actual, r2_actual, df_cmp
+
+# run
+loocv_rmse_leakfree(
+   name='y1',
+   X=X_full,
+   y=y_full,
+   params=manual_params_y1,
+   scale_X=True,
+   scale_y=True
+)
+ 
