@@ -1,0 +1,138 @@
+from sklearn.model_selection import cross_val_predict
+import numpy as np
+import pandas as pd
+import warnings
+
+from sklearn.linear_model import Lasso
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.compose import TransformedTargetRegressor
+from sklearn.model_selection import GridSearchCV, LeaveOneOut
+from sklearn.metrics import make_scorer, mean_squared_error, r2_score
+from sklearn.exceptions import ConvergenceWarning
+
+warnings.filterwarnings('ignore', category=ConvergenceWarning)
+
+# 1) Input of features and targets
+data = {
+    'x1': #your_data_pathway,  # TFR
+    'x2': #your_data_pathway,  # FRR
+    'x3': #your_data_pathway,  # Conc
+    'x4': #your_data_pathway,  # DOPC
+    'x5': #your_data_pathway,  # Chol
+    'x6': #your_data_pathway,  # ESM
+    'x7': #your_data_pathway, # GP340
+    'x8': #your_data_pathway,  # rDPH
+    'y1': #your_data_pathway,  # Size
+    'y2': #your_data_pathway,  # PDI
+}
+df = pd.DataFrame(data)
+
+
+X = np.column_stack([x1, x2, x3, x4, x5, x6, x7, x8])
+y = np.array(y2)   # Select y1 or y2
+
+# ─── 2) scorer  ─────────────────────────────────────────
+loo = LeaveOneOut()
+rmse_scorer = make_scorer(
+    lambda yt, yp: np.sqrt(mean_squared_error(yt, yp)),
+    greater_is_better=False
+)
+
+# ─── 3) Model ───────────────────────────────────────────
+base_pipeline = Pipeline([
+    ('scaler', StandardScaler()),
+    ('lasso', Lasso())
+])
+
+model = TransformedTargetRegressor(
+    regressor=base_pipeline,
+    transformer=None
+)
+
+# ─── 4) grid search  ───────────────
+param_grid = {
+    'transformer': [None, StandardScaler()],
+    'regressor__lasso__alpha': [1e-4, 1e-3, 1e-2, 1e-1, 1],
+    'regressor__lasso__max_iter': [50, 100, 1000, 5000, 10000],
+    'regressor__lasso__tol': [1e-3, 1e-4, 1e-5],
+    'regressor__lasso__positive': [False, True],
+    'regressor__lasso__selection': ['cyclic', 'random'],
+    'regressor__scaler__with_mean': [True, False],
+    'regressor__scaler__with_std': [True, False],
+}
+
+# ─── 5) GridSearchCV  ───────────────────────────────────
+gs = GridSearchCV(
+    estimator=model,
+    param_grid=param_grid,
+    scoring=rmse_scorer,
+    cv=loo,
+    n_jobs=-1,
+    refit=True,
+    error_score='raise'
+)
+
+gs.fit(X, y)
+
+print("Best params:")
+print(gs.best_params_)
+print(f"Best LOOCV RMSE: {-gs.best_score_:.6f}")
+
+# ─── 6. Save best model LOOCV prediction ─────────────────────
+best_model = gs.best_estimator_
+
+y_pred_loocv = cross_val_predict(
+    best_model,
+    X,
+    y,
+    cv=loo,
+    n_jobs=-1
+)
+
+rmse_loocv = np.sqrt(mean_squared_error(y, y_pred_loocv))
+r2_loocv = r2_score(y, y_pred_loocv)
+
+print(f"LOOCV RMSE (best model): {rmse_loocv:.6f}")
+print(f"LOOCV R2 (best model): {r2_loocv:.6f}")
+
+df_loocv = pd.DataFrame({
+    'y_true': y,
+    'y_pred_loocv': y_pred_loocv
+})
+df_loocv['residual'] = df_loocv['y_true'] - df_loocv['y_pred_loocv']
+df_loocv['abs_error'] = df_loocv['residual'].abs()
+df_loocv['squared_error'] = df_loocv['residual'] ** 2
+
+out_csv_loocv = #'#your_pathway.csv'
+with open(out_csv_loocv, 'w') as f:
+    f.write(f"# Best params: {gs.best_params_}\n")
+    f.write(f"# LOOCV RMSE: {rmse_loocv:.6f}\n")
+    f.write(f"# LOOCV R2: {r2_loocv:.6f}\n")
+
+df_loocv.to_csv(out_csv_loocv, mode='a', index=False)
+print(f"Saved LOOCV comparison to:\n{out_csv_loocv}")
+
+# ─── 6) Save results ──────────────────────────────────────
+df = pd.DataFrame(gs.cv_results_)
+df['rmse_LOOCV'] = -df['mean_test_score']
+
+full_r2 = []
+for params in df['params']:
+    model.set_params(**params)
+    model.fit(X, y)
+    yp = model.predict(X)
+    full_r2.append(r2_score(y, yp))
+
+df['full_R2'] = full_r2
+
+df_out = pd.DataFrame(df['params'].tolist())
+df_out['rmse_LOOCV'] = df['rmse_LOOCV']
+df_out['full_R2'] = df['full_R2']
+
+out_path = #'#your_pathway.csv'
+df_out.to_csv(out_path, index=False)
+print(f"Saved detailed results to:\n{out_path}")
+
+
+
